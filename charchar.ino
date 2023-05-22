@@ -1,18 +1,50 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 
-const char* ssid = "YOUR_WIFI_SSID";
-const char* password = "YOUR_WIFI_PASSWORD";
-const char* mqtt_server = "MQTT_SERVER_IP";
-const char* mqtt_topic = "YOUR_MQTT_TOPIC";
+// Replace with your network credentials
+const char* ssid = "your_SSID";
+const char* password = "your_PASSWORD";
 
-const int sensorPin = A0;
-const int ledPin = D1;
+// Replace with your MQTT broker IP address
+const char* mqtt_server = "your_MQTT_broker_IP";
 
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-void setup_wifi() {
+const int acs712Pin = A0; // ACS712 connected to A0 pin
+const int ledPin = D1; // LED connected to D1 pin
+
+void setup() {
+  pinMode(ledPin, OUTPUT);
+
+  Serial.begin(115200);
+  setupWiFi();
+  setupMQTT();
+}
+
+void loop() {
+  if (!client.connected()) {
+    reconnectMQTT();
+  }
+  client.loop();
+
+  int sensorValue = analogRead(acs712Pin);
+  float voltage = (sensorValue / 1023.0) * 3.3; // Convert sensor value to voltage (assuming 3.3V reference)
+
+  // Adjust the threshold value as per your requirements
+  float threshold = 2.0; // Example threshold value
+
+  if (voltage > threshold) {
+    digitalWrite(ledPin, HIGH); // Turn on LED
+    sendNotification("ACS712 Alert: Current threshold exceeded!");
+  } else {
+    digitalWrite(ledPin, LOW); // Turn off LED
+  }
+
+  delay(1000); // Adjust delay as per your requirements
+}
+
+void setupWiFi() {
   delay(10);
   Serial.println();
   Serial.print("Connecting to ");
@@ -27,40 +59,19 @@ void setup_wifi() {
 
   Serial.println("");
   Serial.println("WiFi connected");
-  Serial.println("IP address: ");
+  Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
 }
 
-void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message received: ");
-  Serial.println(topic);
-
-  if (strcmp(topic, mqtt_topic) == 0) {
-    // Convert payload to integer value
-    int value = 0;
-    for (unsigned int i = 0; i < length; i++) {
-      value = value * 10 + (payload[i] - '0');
-    }
-
-    if (value > 0) {
-      digitalWrite(ledPin, HIGH);
-      Serial.println("LED turned on");
-    } else {
-      digitalWrite(ledPin, LOW);
-      Serial.println("LED turned off");
-    }
-  }
+void setupMQTT() {
+  client.setServer(mqtt_server, 1883);
 }
 
-void reconnect() {
+void reconnectMQTT() {
   while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    String clientId = "ESP8266Client-";
-    clientId += String(random(0xffff), HEX);
-
-    if (client.connect(clientId.c_str())) {
+    Serial.print("Connecting to MQTT Broker...");
+    if (client.connect("ESP8266Client")) {
       Serial.println("connected");
-      client.subscribe(mqtt_topic);
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
@@ -70,31 +81,8 @@ void reconnect() {
   }
 }
 
-void setup() {
-  pinMode(ledPin, OUTPUT);
-
-  Serial.begin(115200);
-  setup_wifi();
-  client.setServer(mqtt_server, 1883);
-  client.setCallback(callback);
-}
-
-void loop() {
-  if (!client.connected()) {
-    reconnect();
+void sendNotification(const char* message) {
+  if (client.connected()) {
+    client.publish("homeassistant/notification", message);
   }
-  client.loop();
-
-  // Read analog input from ACS712 sensor
-  int sensorValue = analogRead(sensorPin);
-
-  // Adjust the threshold value as per your requirement
-  if (sensorValue > 512) {
-    // Publish the sensor value to MQTT topic
-    char msg[16];
-    snprintf(msg, sizeof(msg), "%d", sensorValue);
-    client.publish(mqtt_topic, msg);
-  }
-
-  delay(1000);
 }
